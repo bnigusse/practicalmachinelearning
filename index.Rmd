@@ -1,22 +1,209 @@
 ---
-title: "Practical Machine Leaning Course Project"
+title: "Practical Machine Learning Course Project"
 author: "nigusseba"
-date: "April 19, 2016"
+date: "April 24, 2016"
 output: html_document
 ---
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r}
-summary(cars)
+```{r setup, cache = F, echo = F, message = F, warning = F, tidy = F, results='hide'}
+library(knitr)
+opts_chunk$set(message = F, error = F, warning = F, comment = NA, fig.align = 'center', dpi = 100, tidy = F, 
+echo = TRUE,fig.width = 6, fig.height = 6)
 ```
 
-You can also embed plots, for example:
+## Synopsis
+This report describes the data partitioning, preprocessing, building and cross-validating the model. Since this is a classification problem, *Random Forest* algorithm selected and is believed to be very accurate and reliable model for wider range of classification applications. The accuracy of the fit model over the training data set found out to be 100% using 54 predictor variables. Final model fit has OOB estimated error rate of about 0.15%. The model also cross-validated using a separate deta set and the out-of-sample estimated error rate was 0.18%.
+
+## Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+
+## Tiding and PreProcessing Data
+The training and testing datasets were downloaded and cleaned. The cleaning removes variables with missing and blank observations. 
 
 ```{r, echo=FALSE}
-plot(cars)
+trainingFile="C:/DATA/RPrograming/MachineLearning/pml-training.csv"
+if(!file.exists(trainingFile)){
+    fileURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+    res <- download.file(fileURL, trainingFile, method="auto")
+}
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r, echo=TRUE, results='asis'}
+trainingRaw <- read.csv(trainingFile, sep=",", header = TRUE)
+dim(trainingRaw)
+```
+
+```{r, echo=FALSE}
+testingFile="C:/DATA/RPrograming/MachineLearning/pml-testing.csv"
+if(!file.exists(testingFile)){
+    fileURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+    res <- download.file(fileURL, testingFile, method="auto")
+}
+```
+
+```{r, echo=TRUE, results='asis'}
+testingRaw <- read.csv(testingFile, sep=",", header = TRUE)
+dim(testingRaw)
+```
+
+```{r nTrue, echo=FALSE, results='asis'}
+CleanVar <- sapply(trainingRaw, function (var) any(is.na(var) | var == ""))
+nTrue <- table(CleanVar)["TRUE"][[1]]
+```
+
+```{r predVar, echo=FALSE, results='asis'}
+Predictors <- !CleanVar & grepl("belt|[^(fore)]arm|dumbbell|forearm|raw_timestamp", names(CleanVar))
+predictorVariables <- names(CleanVar)[Predictors]
+```
+
+```{r nObs, echo=FALSE, results='asis'}
+training <- trainingRaw[, c(predictorVariables,"classe")]
+nObs <- dim(training)[1]
+```
+The total number of variables with either missing data or blank observations was `r nTrue`. The variables from accelerometers on the *belt*, *forearm*, *arm*, and *dumbell* were selected as predictors for the analysis. Variables selected as predictors were:
+
+```{r nVars, echo=FALSE, results='asis'}
+nVars <- length(predictorVariables)
+```
+
+```{r, echo=TRUE}
+predictorVariables
+```
+
+```{r, echo=FALSE, results='asis'}
+testing <- testingRaw[, c(predictorVariables)]
+```
+
+The traning data set containing clean `r nVars` predictor variables and a reponse variable. There are `r nObs` observations in the training data set.
+
+### Partitioning Data
+The training data was spartitionined for training and cross-validating. The *caret* package was used for training the model. Even though *Random Forest*  implicitly creates random sample for cross-validation internally, here the training data was partitioned into training and cross-validating data set with 75% and 25% proportions, respectively. The cross-validation data set was used to estimate the out-of-smaple error rate and comapred it to the unbiased OOB estimated error rate of the *Random Forest* algorithm, estimated internally during building the model.  Otherwise, random forests, does not need for cross-validation or a separate test set to get an unbiased estimate of the test set error (www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm#ooberr). 
+
+```{r, echo=TRUE}
+suppressMessages(library(caret))
+```
+
+```{r, echo=FALSE, results='asis'}
+set.seed(8302014)
+inTrain <- createDataPartition(training$classe, p=0.75)[[1]]
+trainData <- training[inTrain,]
+crossVData <- training[-inTrain,]
+dim(trainData)
+dim(crossVData)
+```
+
+### Preprocessing Data
+*Tiding training data set predictors:*
+```{r, echo=TRUE}
+trainData_pred <- trainData[, predictorVariables]
+```
+
+*Tiding cross-validation data set predictors:*
+```{r, echo=TRUE}
+crossVData_pred <- crossVData[, predictorVariables]
+```
+
+#### Selected Training Data Set
+```{r, echo=TRUE, results='asis'}
+trainData_T <- data.frame(trainData_pred, classe = trainData[, 55])
+dim(trainData_T)
+```
+
+*Checking for near zero variance of the tidy training data set:*
+```{r, echo=TRUE, results='asis'}
+TnearZVar <- nearZeroVar(trainData_T, saveMetrics=TRUE)
+if (any(TnearZVar$nzv)) TnearZVar else message("No co-variates to eliminate")
+```
+
+#### Selected Cross-Validation Data Set
+```{r, echo=TRUE, results='asis'}
+crossVData_T <- data.frame(crossVData_pred, classe = crossVData[, 55])
+dim(crossVData_T)
+```
+
+### Building Random Forest Model
+Random forest method was used as prediction algorithm and the model was built using the training data set, *trainData_T*. The In-Sample error was estimated using the training data set. 
+
+*The control parameters set up for model training:*
+```{r, echo=TRUE, results='asis'}
+ctrl <- trainControl(method="cv", number=3, verboseIter=F)
+```
+                     
+*Random Forest model was fit over the training data set:*
+```{r, echo=TRUE, results='asis'}
+suppressMessages(library(randomForest))
+modelFit <- train(classe ~ ., data=trainData_T, method='rf', trControl=ctrl)
+```
+
+The overall accuracy of the optimal model selected, which is mtry = 28, was 1.0. This implies that the Random Forest model is perfect in predicting the outcome variable (classe) of the training data set.
+
+```{r, echo=FALSE}
+modelFit
+```
+
+```{r, echo=TRUE}
+training_Res <- predict(modelFit, trainData_T)
+confusionMatrix(training_Res, trainData[, 55])
+```
+
+*The model accuracy over the training data set:*
+```{r TmodelAccu, echo=TRUE}
+TrainM_accu <- postResample(training_Res, trainData_T$classe)
+Tmodel_accu <- round(TrainM_accu[[1]]*100, 2)
+Tmodel_accu
+```
+
+The In-Sample estimated error rate and accuracy of the model fit over the training data set are summarized as follows. The in-sample accuracy of this model was `r Tmodel_accu`%, and the OOB estimated error rate of the model was 0.18%.
+
+*Summary of the out-of-sample data test accuracy:*
+```{r CVmodelAccu, echo=TRUE}
+crossVData_Res <- predict(modelFit, crossVData_T)
+CVM_accu <- postResample(crossVData_Res, crossVData_T$classe)
+CVmodel_accu <- round(CVM_accu[[1]]*100, 2)
+CVmodel_accu
+```
+
+Then cross-validation of the prediction model was performed using the cross-validation data set, *crossVData_T*. The overall accuracy of the model prediction using out of sample data was `r CVmodel_accu`%, which is slightly lower than the training (in-sample) data set accuracy of `r Tmodel_accu`%, as expected.
+
+
+*Cross-validation result plot:*
+```{r, echo=TRUE, results='asis' }
+suppressMessages(library(ggplot2))
+crossVData_T$predRight <- crossVData_Res==crossVData_T$classe
+qplot(classe, data=crossVData_T, main="Cross-Validation Predictions") + facet_grid(predRight ~ .)
+```
+
+The cross-validation prediction findings shows the *TRUE* and *FALSE* distributions in the plot above. The model predicts the outcome variable of the cross-validation data accurately. The out-of-smaple estimated error rate 0.18% (=100*(1 - 0.9982)) is  identical to the unbiased OOB estimated error rate of the training model. This demonstrates that Random Forest algorithm building does internal out-of-sample validation.   
+
+### Final Model Tuning 
+Since *Random Forest* algorithm does not require separate data set for cross-validation, the selected model was tuned using the full set of the tidy trianing data set, *training*. The unbiased OOB estimated error rate of the model fitted over the whole tidy traning data set was 0.15%. The OOB estimated error rate is consistent with the cross-validation accuracy of 0.18% obtained using the cross-validation partitioned data set *crossVData_T*.
+
+*Random Forst model training over the entire training data set*
+```{r, echo=TRUE, results='asis'}
+set.seed(8302014)
+modelFit <- train(classe ~ ., data=training, method='rf', trControl=ctrl)
+```
+
+*#Summary of the Random Forest Algorithm fit over the entire training data set:*
+```{r, echo=TRUE}
+modelFit$finalModel
+```
+
+Since the OOB estimated error rate of the final optimal selected model is 0.15%, it is sufficiently accurate for this classification problem.  This model does not need any further refinement or comparison with other model fitting algorithm. Hence the final optimal Random Forest model fit was used to evaluate the 20 test cases whose results are summarized in the next section.   
+
+## Final Model Results
+The final optimal classification model selected using the Random Forest algorithm was used to rank important predictor variables and the top 20 most important predictor variables ranked by the Random Forst classification fit model are shown below:
+```{r, echo=FALSE }
+varImp(modelFit)
+```
+
+### Model Evaluation
+Predicted the outcome variable (classe) using the final model selected for the 20 different test cases in the data set, *testing*. The variable *pred20Test* holds the predicted outcome for the test database. The predicted outcome, *problem_id* and *user_name* variables are presented in tabular form below.
+
+```{r, echo=FALSE}
+pred20Test <- predict(modelFit, testing)
+Test_Res <- cbind(pred20Test , testingRaw)
+output_Test_Res <- c("pred20Test", "user_name", "cvtd_timestamp", "problem_id")
+subset(Test_Res, select=output_Test_Res)
+```
